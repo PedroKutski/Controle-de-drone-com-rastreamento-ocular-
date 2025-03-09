@@ -1,0 +1,211 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+import math
+
+# Inicializa o módulo Face Mesh do Mediapipe
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+# Inicializa a captura da webcam
+capture = cv2.VideoCapture(0)
+
+# Configurações do drone
+drone_position = [250, 250]  # Posição inicial do drone
+drone_speed = 5  # Velocidade de movimento
+propeller_angle = 0  # Ângulo das hélices para animação
+tilt = [0, 0]  # Inclinação do drone ao se mover
+
+# Cores personalizadas
+COLORS = {
+    "background": (8, 20, 40),
+    "drone_body": (50, 50, 50),
+    "propeller": (100, 100, 100),
+    "led": (0, 255, 0),
+    "arm": (80, 80, 80)
+}
+
+# Variáveis de calibração
+calibrated = False  # Indica se a calibração foi realizada
+calibration_offset = [0, 0]  # Offset de calibração para o centro do olhar
+
+def draw_drone(image, position, angle, tilt):
+    """Desenha um drone realista com braços, hélices nas pontas e luzes"""
+    x, y = position
+    body_size = 30  # Tamanho do corpo central
+    arm_length = 80  # Comprimento dos braços
+    propeller_radius = 15  # Raio das hélices
+
+    # Desenha o corpo central (círculo)
+    cv2.circle(image, (x, y), body_size, COLORS["drone_body"], -1)
+    cv2.circle(image, (x, y), body_size, (0, 0, 0), 2)  # Borda
+
+    # Desenha os braços do drone (4 braços em forma de X)
+    for i in range(4):
+        angle_degrees = 45 + 90 * i
+        radians = math.radians(angle_degrees)
+        dx = int(math.cos(radians) * arm_length) + tilt[0]
+        dy = int(math.sin(radians) * arm_length) + tilt[1]
+        cv2.line(image, (x - dx // 2, y - dy // 2), (x + dx, y + dy), COLORS["arm"], 5)
+
+        # Desenha as hélices nas pontas dos braços com efeito de desfoque
+        propeller_x = x + dx
+        propeller_y = y + dy
+        for j in range(3):  # Desenha múltiplas hélices para simular movimento
+            offset_angle = angle + angle_degrees + (j * 120)
+            cv2.ellipse(image, (propeller_x, propeller_y), (propeller_radius, propeller_radius // 2), offset_angle, 0, 360, COLORS["propeller"], -1)
+
+    # Desenha as luzes do drone (4 LEDs)
+    for i in range(4):
+        angle_degrees = 45 + 90 * i
+        radians = math.radians(angle_degrees)
+        dx = int(math.cos(radians) * (body_size - 5)) + tilt[0]
+        dy = int(math.sin(radians) * (body_size - 5)) + tilt[1]
+        cv2.circle(image, (x + dx, y + dy), 5, COLORS["led"], -1)
+
+def draw_simulator_background(image):
+    """Desenha um fundo de simulador com grid e efeito de profundidade"""
+    height, width, _ = image.shape
+    
+    # Cor de fundo (gradiente escuro)
+    for y in range(height):
+        color = int(8 + (20 - 8) * (y / height))
+        cv2.line(image, (0, y), (width, y), (color, color, color), 1)
+    
+    # Grid 3D (linhas horizontais e verticais)
+    grid_size = 50
+    for i in range(0, width, grid_size):
+        cv2.line(image, (i, 0), (i, height), (50, 50, 50), 1)
+    for j in range(0, height, grid_size):
+        cv2.line(image, (0, j), (width, j), (50, 50, 50), 1)
+
+    # Efeito de perspectiva (linhas diagonais)
+    for i in range(0, width + height, grid_size):
+        cv2.line(image, (i, 0), (0, i), (70, 70, 70), 1)
+        cv2.line(image, (width - i, height), (width, height - i), (70, 70, 70), 1)
+
+def draw_hud(image):
+    """Desenha o HUD (Interface)"""
+    height, width, _ = image.shape
+    
+    # Borda
+    cv2.rectangle(image, (0, 0), (width - 1, height - 1), (0, 255, 0), 2)
+    
+    # Indicador de velocidade
+    cv2.putText(image, f"SPD: {drone_speed} m/s", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    
+    # Indicador de inclinação
+    cv2.putText(image, f"TILT: X={tilt[0]} Y={tilt[1]}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    
+    # Indicador de calibração
+    if calibrated:
+        cv2.putText(image, "Calibrado", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    else:
+        cv2.putText(image, "Pressione 'g' para calibrar", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+while True:
+    ret, frame = capture.read()
+    if not ret:
+        break
+
+    # Inverte a imagem para efeito espelho
+    frame = cv2.flip(frame, 1)
+
+    # Redimensiona o frame para 500px de altura mantendo a proporção
+    height, width = frame.shape[:2]
+    new_height = 500
+    new_width = int(width * (new_height / height))
+    frame = cv2.resize(frame, (new_width, new_height))
+
+    # Processa a imagem com o Mediapipe (converte para RGB)
+    image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(image_rgb)
+
+    # Inicializa a direção do olhar como "neutro"
+    gaze_direction = "stop"
+
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            # Armazena os pontos dos olhos em uma lista (convertendo para pixels)
+            left_eye = []
+            right_eye = []
+            for idx, landmark in enumerate(face_landmarks.landmark):
+                if idx in [33, 133]:  # Pontos de referência para o olho esquerdo
+                    left_eye.append((int(landmark.x * new_width), int(landmark.y * new_height)))
+                elif idx in [362, 263]:  # Pontos de referência para o olho direito
+                    right_eye.append((int(landmark.x * new_width), int(landmark.y * new_height)))
+
+            # Calcula o centro de cada olho
+            left_eye_center = np.mean(left_eye, axis=0).astype(int)
+            right_eye_center = np.mean(right_eye, axis=0).astype(int)
+
+            # Calcula a posição média dos olhos (centro do rosto)
+            eye_center = np.mean([left_eye_center, right_eye_center], axis=0).astype(int)
+
+            # Calibração: Define o offset quando a tecla 'g' é pressionada
+            if not calibrated:
+                if cv2.waitKey(1) & 0xFF == ord('g'):
+                    calibration_offset = [eye_center[0] - new_width // 2, eye_center[1] - new_height // 2]
+                    calibrated = True
+                    # Reposiciona o drone no centro da tela após a calibração
+                    drone_position = [new_height // 2, new_height // 2]
+
+            # Ajusta a posição do olhar com base na calibração
+            if calibrated:
+                eye_center[0] -= calibration_offset[0]
+                eye_center[1] -= calibration_offset[1]
+
+            # Determina a direção do olhar com base na posição dos olhos
+            if eye_center[0] < new_width // 2 - 1.8:  # Olhando para a esquerda (sensibilidade reduzida)
+                gaze_direction = "left"
+            elif eye_center[0] > new_width // 2 + 1.8:  # Olhando para a direita (sensibilidade reduzida)
+                gaze_direction = "right"
+            elif eye_center[1] < new_height // 2 -1.8:  # Olhando para cima (sensibilidade reduzida)
+                gaze_direction = "up"
+            elif eye_center[1] > new_height // 2 + 1.8:  # Olhando para baixo (sensibilidade reduzida)
+                gaze_direction = "down"
+            else:
+                gaze_direction = "stop"  # Olhar neutro
+
+    # Atualiza a posição do drone com base na direção do olhar
+    if gaze_direction == "up":
+        drone_position[1] -= drone_speed
+        tilt = [0, -5]
+    elif gaze_direction == "down":
+        drone_position[1] += drone_speed
+        tilt = [0, 5]
+    elif gaze_direction == "left":
+        drone_position[0] -= drone_speed
+        tilt = [-5, 0]
+    elif gaze_direction == "right":
+        drone_position[0] += drone_speed
+        tilt = [5, 0]
+    else:
+        tilt = [0, 0]  # Reseta a inclinação quando o olhar é neutro
+
+    # Mantém o drone dentro da janela do drone
+    drone_position[0] = max(80, min(new_height - 80, drone_position[0]))  # Limita o movimento no eixo X
+    drone_position[1] = max(80, min(new_height - 80, drone_position[1]))  # Limita o movimento no eixo Y
+    
+    # Animação rápida das hélices
+    propeller_angle = (propeller_angle + 10) % 360  # Aumentei a velocidade de rotação
+
+    # Cria a janela do drone
+    drone_window = np.zeros((new_height, new_height, 3), dtype=np.uint8)
+    draw_simulator_background(drone_window)  # Adiciona o fundo do simulador
+    draw_drone(drone_window, drone_position, propeller_angle, tilt)
+    draw_hud(drone_window)
+    
+    # Combina as janelas
+    combined = np.hstack((frame, drone_window))
+    
+    # Exibe a janela combinada
+    cv2.imshow("Drone Control - [Webcam] | [Drone View]", combined)
+
+    # Encerra com ESC
+    if cv2.waitKey(1) == 27:
+        break
+
+# Libera os recursos
+capture.release()
+cv2.destroyAllWindows()
