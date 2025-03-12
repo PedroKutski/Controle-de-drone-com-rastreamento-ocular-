@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import math
+import time
 
 # Inicializa o módulo Face Mesh do Mediapipe
 mp_face_mesh = mp.solutions.face_mesh
@@ -22,31 +23,52 @@ COLORS = {
     "drone_body": (50, 50, 50),
     "propeller": (100, 100, 100),
     "led": (0, 255, 0),
-    "arm": (80, 80, 80)
+    "arm": (80, 80, 80),
+    "trail": (0, 255, 255)  # Cor do rastro
 }
 
 # Variáveis de calibração
 calibrated = False  # Indica se a calibração foi realizada
 calibration_offset = [0, 0]  # Offset de calibração para o centro do olhar
 
+# Variáveis para o rastro
+trail_positions = []  # Lista para armazenar as posições do rastro
+max_trail_length = 100  # Número máximo de pontos no rastro
+
+# Variáveis para detecção de piscada
+blink_counter = 0  # Contador de frames com olhos fechados
+blink_threshold = 3  # Número de frames para considerar uma piscada
+
+# Variáveis do controlador PID
+Kp = 1.4  # Ganho proporcional (aumentado)
+Ki = 0.03  # Ganho integral (aumentado)
+Kd = 0.03  # Ganho derivativo (aumentado)
+prev_error_x = 0  # Erro anterior no eixo X
+prev_error_y = 0  # Erro anterior no eixo Y
+integral_x = 0  # Termo integral no eixo X
+integral_y = 0  # Termo integral no eixo Y
+last_time = time.time()  # Tempo do último frame
+
 def draw_drone(image, position, angle, tilt):
-    """Desenha um drone realista com braços, hélices nas pontas e luzes"""
+    """Desenha um drone realista com braços, hélices nas pontas e luzes (visto de frente)"""
     x, y = position
-    body_size = 30  # Tamanho do corpo central
-    arm_length = 80  # Comprimento dos braços
-    propeller_radius = 15  # Raio das hélices
+    body_size_x = 15  # Largura reduzida do corpo central
+    body_size_y = 25  # Altura mantida
+    arm_length_x = 80  # Comprimento reduzido dos braços no eixo X
+    arm_length_y = 80  # Comprimento mantido no eixo Y
+    propeller_radius =10  # Raio das hélices
 
-    # Desenha o corpo central (círculo)
-    cv2.circle(image, (x, y), body_size, COLORS["drone_body"], -1)
-    cv2.circle(image, (x, y), body_size, (0, 0, 0), 2)  # Borda
+    # Desenha o corpo central (elipse para parecer mais fino)
+    cv2.ellipse(image, (x, y), (body_size_x, body_size_y), 0, 0, 360, COLORS["drone_body"], -1)
+    cv2.ellipse(image, (x, y), (body_size_x, body_size_y), 0, 0, 360, (0, 0, 0), 2)  # Borda
 
-    # Desenha os braços do drone (4 braços em forma de X)
+    # Desenha os braços do drone (4 braços em forma de X, mais finos)
     for i in range(4):
         angle_degrees = 45 + 90 * i
         radians = math.radians(angle_degrees)
-        dx = int(math.cos(radians) * arm_length) + tilt[0]
-        dy = int(math.sin(radians) * arm_length) + tilt[1]
-        cv2.line(image, (x - dx // 2, y - dy // 2), (x + dx, y + dy), COLORS["arm"], 5)
+        dx = int(math.cos(radians) * arm_length_x) + tilt[0]
+        dy = int(math.sin(radians) * arm_length_y) + tilt[1]
+        cv2.line(image, (x - dx // 2, y - dy // 2), (x + dx, y + dy), COLORS["arm"], 3)  # Espessura reduzida
 
         # Desenha as hélices nas pontas dos braços com efeito de desfoque
         propeller_x = x + dx
@@ -59,8 +81,8 @@ def draw_drone(image, position, angle, tilt):
     for i in range(4):
         angle_degrees = 45 + 90 * i
         radians = math.radians(angle_degrees)
-        dx = int(math.cos(radians) * (body_size - 5)) + tilt[0]
-        dy = int(math.sin(radians) * (body_size - 5)) + tilt[1]
+        dx = int(math.cos(radians) * (body_size_x - 5)) + tilt[0]
+        dy = int(math.sin(radians) * (body_size_y - 5)) + tilt[1]
         cv2.circle(image, (x + dx, y + dy), 5, COLORS["led"], -1)
 
 def draw_simulator_background(image):
@@ -102,6 +124,53 @@ def draw_hud(image):
         cv2.putText(image, "Calibrado", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     else:
         cv2.putText(image, "Pressione 'g' para calibrar", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+def draw_trail(image, positions):
+    """Desenha o rastro do drone"""
+    for i in range(1, len(positions)):
+        cv2.line(image, tuple(positions[i - 1]), tuple(positions[i]), COLORS["trail"], 2)
+
+def detect_blink(face_landmarks, eye_points):
+    """Detecta se o usuário piscou com base nos pontos dos olhos"""
+    global blink_counter
+
+    # Calcula a distância vertical entre os pontos superior e inferior do olho
+    eye_top = face_landmarks.landmark[eye_points[0]].y
+    eye_bottom = face_landmarks.landmark[eye_points[1]].y
+    eye_height = abs(eye_top - eye_bottom)
+
+    # Se a altura do olho for pequena, considera que o olho está fechado
+    if eye_height < 0.02:  # Ajuste esse valor conforme necessário
+        blink_counter += 1
+    else:
+        blink_counter = 0
+
+    # Retorna True se uma piscada for detectada
+    return blink_counter >= blink_threshold
+
+def pid_controller(setpoint, current_position, prev_error, integral, Kp, Ki, Kd, dt):
+    """Calcula a saída do controlador PID"""
+    # Calcula o erro
+    error = setpoint - current_position
+    
+    # Calcula o termo proporcional
+    proportional = Kp * error
+    
+    # Calcula o termo integral
+    integral += error * dt
+    integral_term = Ki * integral
+    
+    # Calcula o termo derivativo
+    derivative = (error - prev_error) / dt
+    derivative_term = Kd * derivative
+    
+    # Saída do PID
+    output = proportional + integral_term + derivative_term
+    
+    # Atualiza o erro anterior
+    prev_error = error
+    
+    return output, prev_error, integral
 
 while True:
     ret, frame = capture.read()
@@ -156,32 +225,50 @@ while True:
                 eye_center[1] -= calibration_offset[1]
 
             # Determina a direção do olhar com base na posição dos olhos
-            if eye_center[0] < new_width // 2 - 1.8:  # Olhando para a esquerda (sensibilidade reduzida)
+            if eye_center[0] < new_width // 2 - 2:  # Olhando para a esquerda (sensibilidade reduzida)
                 gaze_direction = "left"
-            elif eye_center[0] > new_width // 2 + 1.8:  # Olhando para a direita (sensibilidade reduzida)
+            elif eye_center[0] > new_width // 2 + 2:  # Olhando para a direita (sensibilidade reduzida)
                 gaze_direction = "right"
-            elif eye_center[1] < new_height // 2 -1.8:  # Olhando para cima (sensibilidade reduzida)
+            elif eye_center[1] < new_height // 2 - 2:  # Olhando para cima (sensibilidade reduzida)
                 gaze_direction = "up"
-            elif eye_center[1] > new_height // 2 + 1.8:  # Olhando para baixo (sensibilidade reduzida)
+            elif eye_center[1] > new_height // 2 + 2:  # Olhando para baixo (sensibilidade reduzida)
                 gaze_direction = "down"
             else:
                 gaze_direction = "stop"  # Olhar neutro
 
-    # Atualiza a posição do drone com base na direção do olhar
+            # Detecta piscada
+            if detect_blink(face_landmarks, [159, 145]):  # Pontos para o olho esquerdo
+                trail_positions.clear()  # Limpa o rastro
+
+    # Define a posição desejada com base na direção do olhar
     if gaze_direction == "up":
-        drone_position[1] -= drone_speed
-        tilt = [0, -5]
+        setpoint_y = drone_position[1] - drone_speed
+        setpoint_x = drone_position[0]
     elif gaze_direction == "down":
-        drone_position[1] += drone_speed
-        tilt = [0, 5]
+        setpoint_y = drone_position[1] + drone_speed
+        setpoint_x = drone_position[0]
     elif gaze_direction == "left":
-        drone_position[0] -= drone_speed
-        tilt = [-5, 0]
+        setpoint_x = drone_position[0] - drone_speed
+        setpoint_y = drone_position[1]
     elif gaze_direction == "right":
-        drone_position[0] += drone_speed
-        tilt = [5, 0]
+        setpoint_x = drone_position[0] + drone_speed
+        setpoint_y = drone_position[1]
     else:
-        tilt = [0, 0]  # Reseta a inclinação quando o olhar é neutro
+        setpoint_x = drone_position[0]
+        setpoint_y = drone_position[1]
+
+    # Calcula o tempo decorrido desde o último frame
+    current_time = time.time()
+    dt = current_time - last_time
+    last_time = current_time
+
+    # Aplica o controlador PID no eixo X
+    output_x, prev_error_x, integral_x = pid_controller(setpoint_x, drone_position[0], prev_error_x, integral_x, Kp, Ki, Kd, dt)
+    drone_position[0] += int(output_x)
+
+    # Aplica o controlador PID no eixo Y
+    output_y, prev_error_y, integral_y = pid_controller(setpoint_y, drone_position[1], prev_error_y, integral_y, Kp, Ki, Kd, dt)
+    drone_position[1] += int(output_y)
 
     # Mantém o drone dentro da janela do drone
     drone_position[0] = max(80, min(new_height - 80, drone_position[0]))  # Limita o movimento no eixo X
@@ -190,9 +277,15 @@ while True:
     # Animação rápida das hélices
     propeller_angle = (propeller_angle + 10) % 360  # Aumentei a velocidade de rotação
 
+    # Adiciona a posição atual ao rastro
+    trail_positions.append(tuple(drone_position))
+    if len(trail_positions) > max_trail_length:
+        trail_positions.pop(0)  # Remove o ponto mais antigo
+
     # Cria a janela do drone
     drone_window = np.zeros((new_height, new_height, 3), dtype=np.uint8)
     draw_simulator_background(drone_window)  # Adiciona o fundo do simulador
+    draw_trail(drone_window, trail_positions)  # Desenha o rastro
     draw_drone(drone_window, drone_position, propeller_angle, tilt)
     draw_hud(drone_window)
     
