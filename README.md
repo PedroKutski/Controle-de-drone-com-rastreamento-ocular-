@@ -1,47 +1,48 @@
-Controle de Drone com Rastreamento Ocular
+# 🚁 Controle de Drone com Rastreamento Ocular
 
-Este projeto implementa um simulador de controle de drone baseado no rastreamento ocular utilizando OpenCV e MediaPipe. O usuário controla o movimento do drone apenas com o olhar, sem a necessidade de controles físicos.
+Este projeto traz uma abordagem inovadora para o controle de drones, utilizando **rastreio ocular**! Com a ajuda do **OpenCV** e do **MediaPipe**, o usuário pode pilotar um drone **apenas com o olhar**, sem necessidade de controles físicos. 👀✨
 
-Como Funciona
+---
 
-1. Captura de Vídeo
-O código utiliza a webcam para capturar imagens em tempo real e processá-las.
+## 🎯 Como Funciona?
 
+1️⃣ **📷 Captura de Vídeo**
+   - A webcam captura imagens em tempo real para análise do movimento dos olhos.
 
-2. Detecção Facial e Rastreamento Ocular
-Com a biblioteca MediaPipe Face Mesh, ele identifica pontos-chave no rosto, focando nos olhos para determinar a direção do olhar.
+2️⃣ **🤖 Detecção Facial e Rastreamento Ocular**
+   - Através do **MediaPipe Face Mesh**, o código identifica pontos-chave do rosto, focando nos olhos para determinar a direção do olhar.
 
+3️⃣ **🎯 Calibração Inteligente**
+   - Antes de iniciar, o usuário pressiona a tecla **'G'** enquanto olha para o centro da tela para calibrar o sistema e compensar variações individuais.
 
-3. Calibração
-Antes de iniciar, o usuário deve calibrar o sistema pressionando a tecla 'g' enquanto olha para o centro da tela. Isso compensa diferenças individuais no rastreamento.
+4️⃣ **🚀 Controle do Drone**
+   - **Olhar para cima** ⬆️ → Drone sobe
+   - **Olhar para baixo** ⬇️ → Drone desce
+   - **Olhar para a esquerda** ⬅️ → Drone vira para a esquerda
+   - **Olhar para a direita** ➡️ → Drone vira para a direita
+   - **Olhar para o centro** 🔵 → Drone permanece parado
 
+5️⃣ **🖥️ Simulação Gráfica Interativa**
+   - O sistema exibe uma interface visual 3D com um drone animado, incluindo fundo gradiente e um grid que cria um efeito de profundidade. 🌐
 
-4. Movimento do Drone
+6️⃣ **📊 Indicadores HUD**
+   - A interface exibe dados como velocidade, inclinação e status da calibração, permitindo um monitoramento em tempo real. 🎛️
 
-Para cima: Olhar para cima
+7️⃣ **🔚 Encerramento**
+   - Para sair do programa, basta pressionar a tecla **ESC**. 🏁
 
-Para baixo: Olhar para baixo
+---
 
-Para a esquerda: Olhar para a esquerda
+## 🚀 Expansões Futuras
 
-Para a direita: Olhar para a direita
+🔹 **Integração com drones reais** 🚁, possibilitando controle físico através do rastreamento ocular.
 
-Parado: Olhar para o centro
+🔹 **Aprimoramento do algoritmo de rastreamento** 👁️, utilizando redes neurais para maior precisão.
 
+🔹 **Aplicações em acessibilidade** ♿, permitindo que pessoas com mobilidade reduzida controlem dispositivos com os olhos.
 
+---
 
-5. Simulação Gráfica
-O drone é desenhado em uma interface gráfica que simula um ambiente 3D com fundo gradiente e grid para um efeito de profundidade. Ele possui corpo central, braços, hélices animadas e LEDs.
-
-
-6. Indicadores HUD
-Uma interface exibe informações como velocidade, inclinação e estado da calibração.
-
-
-7. Encerramento
-Para sair, basta pressionar a tecla ESC.
-
-
-
-Este projeto pode ser expandido para integração com drones reais ou outras aplicações de acessibilidade baseadas em rastreamento ocular.
+## 📜 Licença
+Este projeto é de código aberto e está licenciado sob a **MIT License**. Sinta-se à vontade para explorar, modificar e aprimorar! 🎉
 
